@@ -3,7 +3,7 @@ class: CommandLineTool
 label: Create directory containing symlinks to relevant files for visualization team
 hints:
   DockerRequirement:
-    dockerPull: hubmap/create-vis-symlink-archive:1.0
+    dockerPull: hubmap/create-vis-symlink-archive
 baseCommand: ["/opt/create_visualization_dir.py"]
 
 inputs:

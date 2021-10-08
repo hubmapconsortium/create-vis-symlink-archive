@@ -6,7 +6,7 @@ import tarfile
 from collections import defaultdict
 from pathlib import Path
 from pprint import pformat
-from typing import Dict, Iterable, List, Sequence, Tuple, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -14,8 +14,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+expression_dir_names = ["expr", "expressions"]
+extensions = ["tif", "tiff"]
 integer_pattern = re.compile(r"(\d+)")
-region_pattern = re.compile(r"^reg(\d+)_*")
+region_pattern = re.compile(r"^(?P<region>reg\d+)(?P<image>_S\d+)?")
 
 
 def list_directory_tree(directory: Path) -> str:
@@ -45,10 +47,10 @@ def alphanum_sort_key(path: Path) -> Sequence[Union[int, str]]:
 
 
 def get_img_listing(in_dir: Path) -> List[Path]:
-    allowed_extensions = {".tif", ".tiff"}
-    img_listing = [f for f in in_dir.iterdir() if f.suffix in allowed_extensions]
-    img_listing = sorted(img_listing, key=alphanum_sort_key)
-    return img_listing
+    img_listing = []
+    for extension in extensions:
+        img_listing.extend(in_dir.glob(f"**/*.{extension}"))
+    return sorted(img_listing, key=alphanum_sort_key)
 
 
 def make_dir_if_not_exists(dir_path: Path):
@@ -56,13 +58,18 @@ def make_dir_if_not_exists(dir_path: Path):
         dir_path.mkdir(parents=True, exist_ok=True)
 
 
-def get_file_paths_by_region(dir_listing: Iterable[Path]) -> Dict[int, List[Path]]:
+def get_region(path: Path) -> Optional[str]:
+    if s := region_pattern.match(path.name):
+        pieces = [group or "" for group in s.groups()]
+        return "".join(pieces)
+
+
+def get_file_paths_by_region(dir_listing: Iterable[Path]) -> Dict[str, List[Path]]:
     file_path_by_reg = defaultdict(list)
 
     for path in dir_listing:
-        if s := region_pattern.search(path.name):
-            region_id = int(s.groups()[0])
-            file_path_by_reg[region_id].append(path)
+        if (region := get_region(path)) is not None:
+            file_path_by_reg[region].append(path)
 
     return file_path_by_reg
 
@@ -73,9 +80,16 @@ def create_relative_symlink_target(file_path: Path, file_dir: Path, file_symlink
     return relative_output_path_piece / relative_input_path
 
 
+def find_expression_dir(ometiff_dir: Path) -> Path:
+    for possibility in expression_dir_names:
+        if (d := ometiff_dir / possibility).is_dir():
+            return d
+    raise ValueError("Couldn't find expression directory")
+
+
 def main(ometiff_dir, sprm_output_dir):
     cytometry_ometiff_dir = ometiff_dir / "mask"
-    expressions_ometiff_dir = ometiff_dir / "expressions"
+    expressions_ometiff_dir = find_expression_dir(ometiff_dir)
 
     logger.debug(f"{ometiff_dir=}")
     logger.debug("Cytometry OME-TIFF directory listing:")
@@ -97,25 +111,25 @@ def main(ometiff_dir, sprm_output_dir):
 
     # TODO: Perhaps a proper function to do this in a less repetitive way would be nicer.
     for region in segmentation_mask_ometiffs:
-        reg_dir = output_dir / f"reg{region}"
+        reg_dir = output_dir / region
         make_dir_if_not_exists(reg_dir)
 
     for region in segmentation_mask_ometiffs:
-        reg_dir = output_dir / f"reg{region}"
+        reg_dir = output_dir / region
         symlink = reg_dir / "segmentation.ome.tiff"
         for img_path in segmentation_mask_ometiffs[region]:
             link_target = create_relative_symlink_target(img_path, ometiff_dir, symlink)
             symlinks_to_archive.append((symlink, link_target))
 
     for region in expressions_ometiffs:
-        reg_dir = output_dir / f"reg{region}"
+        reg_dir = output_dir / region
         symlink = reg_dir / "antigen_exprs.ome.tiff"
         for img_path in expressions_ometiffs[region]:
             link_target = create_relative_symlink_target(img_path, ometiff_dir, symlink)
             symlinks_to_archive.append((symlink, link_target))
 
     for region in sprm_outputs:
-        reg_dir = output_dir / f"reg{region}"
+        reg_dir = output_dir / region
         for sprm_file_path in sprm_outputs[region]:
             # kind of hacky, but works well enough
             symlink = reg_dir / sprm_file_path.name.split(".ome.tiff", 1)[1].lstrip("-")

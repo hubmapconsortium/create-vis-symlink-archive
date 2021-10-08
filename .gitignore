@@ -2,3 +2,6 @@
 .*.kate-swp
 .*.swp
 .idea/
+__pycache__/
+for-visualization/
+symlinks.tar
